@@ -89,8 +89,19 @@ Windows PowerShell:
 
 The output is `dist/mdr` on macOS and Linux, or `dist/mdr.exe` on Windows.
 
+Download the latest ready-to-run binaries from the [GitHub Releases page](https://github.com/Ahmadabdelwhab/MDR/releases/latest):
+
+- Linux: `mdr-linux`
+- macOS: `mdr-macos`
+- Windows: `mdr-windows.exe`
+
 The build script bundles the default JSON configuration and Pillow support.
 See [BUILD.md](BUILD.md) for more details.
+
+macOS may warn that an unsigned binary cannot be verified. For a binary you
+built yourself, run `xattr -d com.apple.quarantine ./dist/mdr`, or approve it
+with Finder's **Open** command. Public macOS releases require Apple Developer
+ID signing and notarization.
 
 ## GitHub Actions
 
@@ -102,16 +113,23 @@ The repository has two workflows:
 
 ## Releases
 
-Push a semantic version tag to build all three binaries and publish them as
-GitHub Release assets:
+Release Please manages versioning and releases. Push commits to `main`, then
+it creates or updates a release pull request using the commit history. Merging
+that pull request creates the version tag and GitHub Release. The binary build
+workflow then uploads the Linux, macOS, and Windows binaries to that release.
+
+The initial manifest version is `0.1.0`. After setup, use conventional commit
+messages such as `feat: add image controls` or `fix: handle small terminals`.
+
+If you need to create a version manually, push a semantic version tag:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflow creates a GitHub Release with the Linux, macOS, and
-Windows artifacts. Generated binaries are kept out of Git history.
+Generated binaries are kept out of Git history and attached to the GitHub
+Release as downloadable assets.
 
 ## Project layout
 
