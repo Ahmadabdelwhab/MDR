@@ -31,7 +31,7 @@ def load_config(path: str | None = None) -> dict:
         raise ValueError(f"Invalid JSON in {config_path}: {exc}") from exc
 
     if not isinstance(values, dict):
-        raise ValueError("Configuration must contain a JSON object")
+        raise TypeError("Configuration must contain a JSON object")
     settings.update(values)
 
     if not isinstance(settings["fps"], int) or settings["fps"] <= 0:

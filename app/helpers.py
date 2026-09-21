@@ -47,8 +47,8 @@ def shift_lines(lines: list[str], row_delta: float, col_delta: float) -> list[st
     height = len(lines)
     width = len(lines[0])
     blank = " " * width
-    row_shift = max(-(height - 1), min(height - 1, int(round(row_delta))))
-    col_shift = max(-(width - 1), min(width - 1, int(round(col_delta))))
+    row_shift = max(-(height - 1), min(height - 1, round(row_delta)))
+    col_shift = max(-(width - 1), min(width - 1, round(col_delta)))
     out = [blank] * height
     for index, line in enumerate(lines):
         target = index + row_shift
@@ -76,11 +76,11 @@ def image_to_terminal_lines(path: str, max_width: int, max_height: int):
     if not _PILLOW:
         return [], "Pillow not installed - run: pip3 install pillow"
     if not path or not os.path.isfile(path):
-        return [], "Image not found: %s" % path
+        return [], f"Image not found: {path}"
     try:
         image = _PILImage.open(path).convert("RGBA")
-    except Exception as exc:
-        return [], "Could not open image: %s" % exc
+    except (OSError, ValueError) as exc:
+        return [], f"Could not open image: {exc}"
     if max_width < 8 or max_height < 2:
         return [], None
     ratio = image.width / float(image.height)

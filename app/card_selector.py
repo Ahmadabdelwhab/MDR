@@ -117,7 +117,7 @@ def run(stdscr):
         draw_card(stdscr, LOCATIONS[index], index, total, progress)
         try:
             key = stdscr.getch()
-        except Exception:
+        except curses.error:
             key = -1
         if key in (ord("q"), ord("Q")):
             return None

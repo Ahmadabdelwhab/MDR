@@ -20,10 +20,7 @@ import random
 import time
 
 from assets import *
-from card_selector import run as run_card_selector
 from config import load_config
-from helpers import (center_text, digit_canvas, display_char,
-                     image_to_terminal_lines, shift_lines, smoothstep)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Card Selector — constants & data
@@ -76,7 +73,7 @@ def card_init_colors():
         curses.init_pair(C_NORMAL, 37,  -1)
         curses.init_pair(C_BRIGHT, 51,  -1)
         curses.init_pair(C_ULTRA,  51,  -1)
-    except Exception:
+    except curses.error:
         pass
 
 
@@ -106,8 +103,7 @@ def draw_file_card_animation(win, location, index, total, flip_progress):
     text_w = len(big_lines[0]) if big_lines[0] else 1
 
     card_w = 130
-    if card_w > max_x - 4:
-        card_w = max_x - 4
+    card_w = min(card_w, max_x - 4)
     if card_w % 2 != 0:
         card_w += 1
 
@@ -222,7 +218,7 @@ def run_card_selector(stdscr) -> str | None:
         # ── input ───────────────────────────────────────────────────────────
         try:
             ch = stdscr.getch()
-        except Exception:
+        except curses.error:
             ch = -1
 
         if ch in (ord('q'), ord('Q')):
@@ -348,8 +344,8 @@ def shift_lines(lines: list[str], row_delta: float, col_delta: float) -> list[st
     h = len(lines)
     w = len(lines[0])
     blank = " " * w
-    rd = max(-(h - 1), min(h - 1, int(round(row_delta))))
-    cd = max(-(w - 1), min(w - 1, int(round(col_delta))))
+    rd = max(-(h - 1), min(h - 1, round(row_delta)))
+    cd = max(-(w - 1), min(w - 1, round(col_delta)))
     out = [blank] * h
     for i, line in enumerate(lines):
         j = i + rd
@@ -385,11 +381,11 @@ def image_to_terminal_lines(path: str, max_width: int, max_height: int):
     if not _PILLOW:
         return [], "Pillow not installed — run: pip3 install pillow"
     if not path or not os.path.isfile(path):
-        return [], "Image not found: %s" % path
+        return [], f"Image not found: {path}"
     try:
         img = _PILImage.open(path).convert("RGBA")
-    except Exception as exc:
-        return [], "Could not open image: %s" % exc
+    except (OSError, ValueError) as exc:
+        return [], f"Could not open image: {exc}"
     if max_width < 8 or max_height < 2:
         return [], None
     ratio = img.width / float(img.height)
@@ -822,7 +818,7 @@ class RefinementScreensaver:
 
         # Row 0: location name + progress
         loc_label = f"FILE: {self.location_name}"
-        prog_str  = "%d%% Complete" % self.total_progress
+        prog_str  = f"{self.total_progress}% Complete"
         self.safe_addstr(0, 0, loc_label, h_attr)
         self.safe_addstr(0, max(0, self.width - len(prog_str) - 1),
                          prog_str, h_attr)
@@ -929,7 +925,7 @@ class RefinementScreensaver:
                 self.safe_addstr(hy, hx, "+", wall_a)
             return
 
-        h_rem = max(0, int(round(closed_len * (1.0 - ot) * 0.6)))
+        h_rem = max(0, round(closed_len * (1.0 - ot) * 0.6))
         if side == "left":
             for i in range(1, h_rem + 1):
                 self.safe_addstr(hy, hx + i, "-", wall_a)
@@ -937,8 +933,8 @@ class RefinementScreensaver:
             for i in range(1, h_rem + 1):
                 self.safe_addstr(hy, hx - i, "-", wall_a)
 
-        tip_x = hx + int(round(length * math.cos(angle)))
-        tip_y = hy + int(round(length * math.sin(angle)))
+        tip_x = hx + round(length * math.cos(angle))
+        tip_y = hy + round(length * math.sin(angle))
         x0, y0 = hx, hy
         x1, y1 = tip_x, tip_y
         dx_abs = abs(x1 - x0); dy_abs = abs(y1 - y0)
@@ -989,7 +985,7 @@ class RefinementScreensaver:
         mouth_rows = len(body_rows)
         t        = self._lid_open_t(stage, amount)
         mouth_t  = smoothstep(t)
-        open_rows = int(round(mouth_t * mouth_rows))
+        open_rows = round(mouth_t * mouth_rows)
 
         for row in range(1, BIN_H):
             py = self.bin_y + row
@@ -1042,12 +1038,12 @@ class RefinementScreensaver:
                 continue
             _, _, gy, gx, _, _, _, _ = self._fall_glyph_layout(
                 cl, x0, min(1.0, ghost_t))
-            giy, gix = int(round(gy)), int(round(gx))
-            if giy == int(round(cur_y)) and gix == int(round(cur_x)):
+            giy, gix = round(gy), round(gx)
+            if giy == round(cur_y) and gix == round(cur_x):
                 continue
             self.safe_addstr(ghost_y(giy), ghost_x(gix), ch_ascii, self.attr(attr_name))
 
-        self.draw_glyph_lines(int(round(cur_y)), int(round(cur_x)), lines, bright)
+        self.draw_glyph_lines(round(cur_y), round(cur_x), lines, bright)
 
     def _draw_bin(self, bin_id, x0, active, stage, amount):
         inner = max(1, self.bin_w - 2)
@@ -1057,7 +1053,7 @@ class RefinementScreensaver:
             self._draw_bin_top_open(bin_id, x0, "close", 1.0, active=False)
         self.safe_addstr(
             self.bin_y, x0,
-            center_text("%3d%%" % self.bins[bin_id]["progress"], self.bin_w),
+            center_text(f"{self.bins[bin_id]['progress']:3d}%", self.bin_w),
             self.attr("pair_bin_fill"))
         label_a = self.attr("pair_bin_active") if active else self.attr("pair_bin")
         self.safe_addstr(
@@ -1084,14 +1080,14 @@ class RefinementScreensaver:
     def _draw_footer(self):
         cl = self.cluster
         if cl and cl.phase == PHASE_DROP:
-            status = "refining -> %s" % BIN_NAMES[cl.target_bin]
+            status = f"refining -> {BIN_NAMES[cl.target_bin]}"
         elif self.phase == PHASE_SELECT:
             status = "cluster refining"
         else:
             status = "listening to the field"
         self.safe_addstr(
             self.height - 1, 0,
-            ("%s  |  q quit" % status)[: self.width - 1],
+            f"{status}  |  q quit"[: self.width - 1],
             self.attr("pair_dim"))
 
     # ── main frame ────────────────────────────────────────────────────────────
@@ -1114,13 +1110,6 @@ class RefinementScreensaver:
         self._draw_footer()
         self.stdscr.refresh()
         self.dirty_cells.clear()
-
-
-# Use the extracted modules at runtime while the refinement renderer remains
-# in this file during the migration.
-from card_selector import run as run_card_selector
-from helpers import (center_text, digit_canvas, image_to_terminal_lines,
-                     shift_lines, smoothstep)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
