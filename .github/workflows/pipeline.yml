@@ -36,10 +36,45 @@ jobs:
       - name: Test
         run: python -m unittest discover -s tests -v
 
+  release-version:
+    name: Calculate release version
+    needs: checks
+    if: always() && needs.checks.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Calculate version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" == v* ]]; then
+            version="$REF_NAME"
+          elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" = "main" ]; then
+            latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
+            if [ -z "$latest" ]; then
+              version="v0.1.0"
+            else
+              base="${latest#v}"
+              IFS='.' read -r major minor patch <<< "$base"
+              version="v${major}.${minor}.$((patch + 1))"
+            fi
+          else
+            version="ci"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Using version: $version"
+
   build-image:
     name: Build Docker image
-    needs: checks
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, release-version, create-release-tag]
+    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && (github.event_name == 'pull_request' || needs.create-release-tag.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -62,8 +97,8 @@ jobs:
 
   build-binaries:
     name: Build ${{ matrix.name }} binary
-    needs: checks
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, release-version, create-release-tag]
+    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && (github.event_name == 'pull_request' || needs.create-release-tag.result == 'success')
     strategy:
       matrix:
         include:
@@ -84,23 +119,25 @@ jobs:
       - name: Build binary
         run: python scripts/build.py
       - name: Rename binary for release
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
         shell: bash
         run: |
           if [ "${{ matrix.name }}" = "windows" ]; then
-            cp dist/mdr.exe dist/mdr-windows.exe
+            cp dist/mdr.exe "dist/mdr-${VERSION}-windows.exe"
           else
-            cp dist/mdr "dist/mdr-${{ matrix.name }}"
+            cp dist/mdr "dist/mdr-${VERSION}-${{ matrix.name }}"
           fi
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mdr-${{ matrix.name }}
-          path: dist/mdr-*
+          name: binary-${{ matrix.name }}
+          path: dist/mdr-${{ needs.release-version.outputs.version }}-*
 
   publish-image:
     name: Publish Docker image
-    needs: build-image
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-image, release-version]
+    if: always() && needs.build-image.result == 'success' && needs.release-version.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - name: Download image artifact
@@ -117,7 +154,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Tag and push release image
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.release-version.outputs.version }}
         run: |
           VERSION_NUMBER="${VERSION#v}"
           docker tag mdr:ci "${IMAGE_NAME}:${VERSION}"
@@ -129,25 +166,14 @@ jobs:
 
   prepare-binaries:
     name: Prepare binaries for release
-    needs: build-binaries
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-binaries, release-version]
+    if: always() && needs.build-binaries.result == 'success' && needs.release-version.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: mdr-linux
-          path: release-assets
-          merge-multiple: true
-      - name: Download macOS and Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: mdr-macos
-          path: release-assets
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: mdr-windows
+          pattern: binary-*
           path: release-assets
           merge-multiple: true
       - name: Store release binaries
@@ -158,34 +184,30 @@ jobs:
 
   create-release-tag:
     name: Create release tag
-    needs: [checks, build-image, build-binaries]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [checks, release-version]
+    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - name: Check out full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Create next patch tag
+      - name: Create or verify release tag
         env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release-version.outputs.version }}
         run: |
-          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
-          if [ -z "$latest" ]; then
-            next="v0.1.0"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Release tag $VERSION already exists"
           else
-            version="${latest#v}"
-            IFS='.' read -r major minor patch <<< "$version"
-            next="v${major}.${minor}.$((patch + 1))"
+            git tag "$VERSION" "$GITHUB_SHA"
+            git push origin "$VERSION"
+            echo "Created release tag $VERSION"
           fi
-          echo "Creating release tag ${next}"
-          git tag "${next}" "${GITHUB_SHA}"
-          git push origin "${next}"
 
   release:
     name: Create GitHub release
-    needs: [publish-image, prepare-binaries]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [create-release-tag, prepare-binaries, release-version]
+    if: always() && needs.create-release-tag.result == 'success' && needs.prepare-binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Download release binaries
@@ -196,9 +218,24 @@ jobs:
       - name: Create release and upload binaries
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release-version.outputs.version }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
+          cat > release-notes.md <<EOF
+          # MDR ${VERSION}
+
+          ## Docker image
+
+          \\`docker pull ${IMAGE_NAME}:${VERSION}\\`
+
+          ## Binaries
+
+          - Linux: \\`mdr-${VERSION}-linux\\`
+          - macOS: \\`mdr-${VERSION}-macos\\`
+          - Windows: \\`mdr-${VERSION}-windows.exe\\`
+          EOF
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release upload "${VERSION}" release-assets/* --clobber
+            gh release edit "${VERSION}" --notes-file release-notes.md
           else
-            gh release create "${GITHUB_REF_NAME}" release-assets/* --generate-notes
+            gh release create "${VERSION}" release-assets/* --notes-file release-notes.md
           fi

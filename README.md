@@ -120,31 +120,25 @@ Newer runs cancel older runs for the same branch or tag.
 ```mermaid
 flowchart TD
 	A[Pull request or push] --> B[Lint and unit tests]
-	B --> C[Build Docker image]
-	B --> D[Build Linux binary]
-	B --> E[Build macOS binary]
-	B --> F[Build Windows binary]
-	C --> G[Push Docker image on version tag]
-	D --> H[Prepare release binaries]
-	E --> H
-	F --> H
-	G --> I[Create GitHub Release]
-	H --> I
-	J[Push main] --> K[Release Please PR]
-	B --> K
-	K --> L[Merge release PR]
-	L --> M[Create version tag]
-	M --> C
-	M --> D
-	M --> E
-	M --> F
+	B --> C[Calculate release version]
+	C --> D[Create version tag]
+	D --> E[Build Docker image]
+	D --> F[Build Linux binary]
+	D --> G[Build macOS binary]
+	D --> H[Build Windows binary]
+	E --> I[Push Docker image]
+	F --> J[Prepare release binaries]
+	G --> J
+	H --> J
+	I --> K[Create GitHub Release]
+	J --> K
 ```
 
 ## Releases
 
-Every successful push to `main` creates the next patch version tag. That tag
-starts the Docker and native binary publishing path, which finishes by creating
-the GitHub Release.
+Every successful push to `main` calculates and creates the next patch version
+tag first. That tag is reused in the binary filenames, Docker image tags, and
+GitHub Release details.
 
 ### Commit message rules
 
