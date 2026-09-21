@@ -105,21 +105,46 @@ ID signing and notarization.
 
 ## GitHub Actions
 
-The repository has three workflows:
+The repository uses one pipeline in `pipeline.yml`:
 
-- `release-please.yml` runs linting and unit tests first, then runs Release
-  Please only when those checks pass.
-- `build.yml` builds Linux, macOS, and Windows binaries and uploads temporary
-  workflow artifacts.
-- `docker.yml` builds and publishes the Docker image only on `main` and version
-  tags.
+1. Run linting and unit tests.
+2. Build the Docker image and native binaries after checks pass.
+3. On a version tag, publish the Docker image and binaries.
+4. On a successful push to `main`, create the next patch version tag.
+
+Pull requests build and validate everything but never publish artifacts.
+Newer runs cancel older runs for the same branch or tag.
+
+### Pipeline DAG
+
+```mermaid
+flowchart TD
+	A[Pull request or push] --> B[Lint and unit tests]
+	B --> C[Build Docker image]
+	B --> D[Build Linux binary]
+	B --> E[Build macOS binary]
+	B --> F[Build Windows binary]
+	C --> G[Push Docker image on version tag]
+	D --> H[Prepare release binaries]
+	E --> H
+	F --> H
+	G --> I[Create GitHub Release]
+	H --> I
+	J[Push main] --> K[Release Please PR]
+	B --> K
+	K --> L[Merge release PR]
+	L --> M[Create version tag]
+	M --> C
+	M --> D
+	M --> E
+	M --> F
+```
 
 ## Releases
 
-Release Please manages versioning and releases. Push commits to `main`, then
-it creates or updates a release pull request using the commit history. Merging
-that pull request creates the version tag and GitHub Release. The binary build
-workflow then uploads the Linux, macOS, and Windows binaries to that release.
+Every successful push to `main` creates the next patch version tag. That tag
+starts the Docker and native binary publishing path, which finishes by creating
+the GitHub Release.
 
 ### Commit message rules
 
@@ -131,17 +156,11 @@ git commit -m "fix: remove fifth basket"
 git commit -m "chore: update dependencies"
 ```
 
-`feat` creates a minor release, `fix` creates a patch release, and `chore`
-records maintenance without creating a release. Use lowercase types followed
-by a colon and a short description. Messages such as `[FEAT] add support` or
-`more improvements` are not recognized by Release Please.
+Commit types describe the change, but every successful push to `main` creates a
+patch release. Use lowercase types followed by a colon and a short description.
 
-The initial manifest version is `0.1.0`. Release Please ignores older commits
-that do not use its expected format, so the next change should use a
-Conventional Commit message such as `feat: add image controls` or
-`fix: handle small terminals`. It will then create the release PR.
-
-If you need to create a version manually, push a semantic version tag:
+The initial version is `0.1.0`. To create a version manually, push a semantic
+version tag:
 
 ```bash
 git tag v0.1.0
@@ -157,7 +176,6 @@ Release as downloadable assets.
 app/                    Application modules and bundled config
 tests/                  Unit tests
 scripts/                Platform build entrypoints
-.github/actions/        Reusable lint-and-test custom action
 .github/workflows/      CI, build, and release automation
 Dockerfile              Linux container image
 docker-compose.yaml     Local container commands
