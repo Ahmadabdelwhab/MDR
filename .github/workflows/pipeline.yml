@@ -1,3 +1,18 @@
+# CI/CD pipeline
+#
+# Hardening note: marketplace actions below are pinned to major tags for
+# readability. For full supply-chain hardening, replace each `@vN` with the
+# full commit SHA of the release you audited, e.g.
+#   uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v4.2.1
+#
+# Release paths:
+#   push to main          -> auto patch bump, tag, publish image, GitHub release
+#   workflow_dispatch     -> choose patch/minor/major; dry_run builds only
+#   push of a v*.*.* tag  -> release that exact version (requires a PAT; GitHub
+#                            does not re-trigger workflows for tags pushed by
+#                            the default GITHUB_TOKEN)
+#   pull_request          -> build + test only, never publishes
+
 name: CI/CD pipeline
 
 on:
@@ -6,113 +21,175 @@ on:
     branches: [main]
     tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Version bump to apply"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      dry_run:
+        description: "Build and test only; do not tag, push or release"
+        type: boolean
+        default: true
 
 concurrency:
-  group: pipeline-${{ github.ref }}
-  cancel-in-progress: true
+  # PRs: newest run wins. Release refs: all runs share one group and queue,
+  # so two merges to main can never compute the same next version in parallel.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Least privilege by default; write access is granted per job.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   IMAGE_NAME: ahmadabdelwhab/sodiummdr
+  PYTHON_VERSION: "3.9"
 
 jobs:
   checks:
-    name: Lint
+    name: Lint and unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
       - name: Install development dependencies
         run: python -m pip install -r requirements-dev.txt
+
       - name: Lint
         run: |
           set -o pipefail
-          ruff check app tests 2>&1 | tee lint.log
-      - name: Upload lint log
+          ruff check app tests scripts 2>&1 | tee lint.log
+
+      # Fast feedback: run the suite on the host too, so a broken test fails in
+      # ~1 minute instead of after a full Docker build.
+      - name: Unit tests
+        if: always()
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee unit-test.log
+
+      - name: Upload check logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lint-log
-          path: lint.log
+          name: check-logs
+          path: |
+            lint.log
+            unit-test.log
+          retention-days: 7
 
   release-version:
     name: Calculate release version
     needs: checks
-    if: always() && needs.checks.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
     steps:
       - name: Check out tags
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Calculate version
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" == v* ]]; then
-            version="$REF_NAME"
-          elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" = "main" ]; then
-            latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
-            if [ -z "$latest" ]; then
-              version="v0.1.0"
-            else
-              base="${latest#v}"
-              IFS='.' read -r major minor patch <<< "$base"
-              version="v${major}.${minor}.$((patch + 1))"
-            fi
-          else
-            version="ci"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Using version: $version"
+          REF: ${{ github.ref }}
+          RELEASE_TYPE: ${{ inputs.release_type || 'patch' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: bash .github/scripts/ci/calculate-version.sh
 
   build-image:
     name: Build Docker image
     needs: [checks, release-version]
-    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Build image for validation
-        run: |
-          set -o pipefail
-          docker build --progress=plain --tag mdr:ci . 2>&1 | tee docker-build.log
-          docker save mdr:ci --output /tmp/mdr-image.tar
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mdr:ci
+          # Layer cache persisted across runs, so unchanged layers are reused.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image
+        run: docker save mdr:ci --output /tmp/mdr-image.tar
+
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: mdr-docker-image
           path: /tmp/mdr-image.tar
-      - name: Upload Docker build log
+          retention-days: 3
+
+  scan-image:
+    name: Scan image for vulnerabilities
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mdr-docker-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load --input /tmp/mdr-image.tar
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: mdr:ci
+          format: table
+          output: trivy.log
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload scan report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-build-log
-          path: docker-build.log
+          name: trivy-report
+          path: trivy.log
+          retention-days: 30
 
   container-tests:
     name: Test inside Docker
     needs: build-image
-    if: always() && needs.build-image.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
           name: mdr-docker-image
           path: /tmp
+
       - name: Load image and run tests in container
         run: |
           set -o pipefail
@@ -120,18 +197,22 @@ jobs:
             docker load --input /tmp/mdr-image.tar
             docker run --rm mdr:ci python3 -m unittest discover -s tests -v
           } 2>&1 | tee container-test.log
+
       - name: Upload container test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: container-test-log
           path: container-test.log
+          retention-days: 7
 
   build-binaries:
     name: Build ${{ matrix.name }} binary
-    needs: [checks, release-version, create-release-tag, container-tests]
-    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && needs.container-tests.result == 'success' && (github.event_name == 'pull_request' || needs.create-release-tag.result == 'success')
+    # Only needs the version string, not the tag, so this no longer waits on
+    # tag creation. The tag is now created after every artifact is proven good.
+    needs: [release-version, container-tests, scan-image]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -141,66 +222,48 @@ jobs:
           - os: windows-latest
             name: windows
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
       - name: Build binary
         run: python scripts/build.py
+
       - name: Rename binary for release
+        shell: bash
         env:
           VERSION: ${{ needs.release-version.outputs.version }}
-        shell: bash
+          TARGET: ${{ matrix.name }}
         run: |
-          if [ "${{ matrix.name }}" = "windows" ]; then
+          set -euo pipefail
+          if [ "$TARGET" = "windows" ]; then
             cp dist/mdr.exe "dist/mdr-${VERSION}-windows.exe"
           else
-            cp dist/mdr "dist/mdr-${VERSION}-${{ matrix.name }}"
+            cp dist/mdr "dist/mdr-${VERSION}-${TARGET}"
           fi
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.name }}
           path: dist/mdr-${{ needs.release-version.outputs.version }}-*
-
-  publish-image:
-    name: Publish Docker image
-    needs: [build-image, container-tests, release-version]
-    if: always() && needs.build-image.result == 'success' && needs.container-tests.result == 'success' && needs.release-version.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mdr-docker-image
-          path: /tmp
-      - name: Load image
-        run: docker load --input /tmp/mdr-image.tar
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Tag and push release image
-        env:
-          VERSION: ${{ needs.release-version.outputs.version }}
-        run: |
-          VERSION_NUMBER="${VERSION#v}"
-          docker tag mdr:ci "${IMAGE_NAME}:${VERSION}"
-          docker tag mdr:ci "${IMAGE_NAME}:${VERSION_NUMBER}"
-          docker tag mdr:ci "${IMAGE_NAME}:sha-${GITHUB_SHA}"
-          docker push "${IMAGE_NAME}:${VERSION}"
-          docker push "${IMAGE_NAME}:${VERSION_NUMBER}"
-          docker push "${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          retention-days: 7
+          if-no-files-found: error
 
   prepare-binaries:
     name: Prepare binaries for release
     needs: [build-binaries, release-version]
-    if: always() && needs.build-binaries.result == 'success' && needs.release-version.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: needs.release-version.outputs.is_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download binary artifacts
         uses: actions/download-artifact@v4
@@ -208,70 +271,96 @@ jobs:
           pattern: binary-*
           path: release-assets
           merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Store release binaries
         uses: actions/upload-artifact@v4
         with:
           name: mdr-release-assets
           path: release-assets/*
+          retention-days: 7
+          if-no-files-found: error
 
   create-release-tag:
     name: Create release tag
-    needs: [checks, release-version, container-tests]
-    if: always() && needs.checks.result == 'success' && needs.release-version.result == 'success' && needs.container-tests.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # Everything that can fail has now passed: lint, host tests, image build,
+    # vulnerability scan, container tests, all three binaries.
+    needs: [release-version, container-tests, scan-image, prepare-binaries]
+    if: needs.release-version.outputs.is_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Check out full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Create or verify release tag
         env:
           VERSION: ${{ needs.release-version.outputs.version }}
-        run: |
-          if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Release tag $VERSION already exists"
-          else
-            git tag "$VERSION" "$GITHUB_SHA"
-            git push origin "$VERSION"
-            echo "Created release tag $VERSION"
-          fi
+        run: bash .github/scripts/ci/create-release-tag.sh
+
+  publish-image:
+    name: Publish Docker image
+    needs: [create-release-tag, release-version]
+    if: needs.release-version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Configure this environment in repo settings to require approval or
+    # restrict which branches may deploy.
+    environment: release
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mdr-docker-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load --input /tmp/mdr-image.tar
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag and push release image
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+        run: bash .github/scripts/ci/publish-image.sh
 
   release:
     name: Create GitHub release
     needs: [create-release-tag, prepare-binaries, release-version]
-    if: always() && needs.create-release-tag.result == 'success' && needs.prepare-binaries.result == 'success'
+    if: needs.release-version.outputs.is_release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
     steps:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Download release binaries
         uses: actions/download-artifact@v4
         with:
           name: mdr-release-assets
           path: release-assets
-      - name: Create release and upload binaries
+
+      - name: Build release notes
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release-version.outputs.version }}
-        run: |
-          cat > release-notes.md <<EOF
-          # MDR ${VERSION}
-
-          ## Docker image
-
-          docker pull ${IMAGE_NAME}:${VERSION}
-
-          ## Binaries
-
-          - Linux: mdr-${VERSION}-linux
-          - macOS: mdr-${VERSION}-macos
-          - Windows: mdr-${VERSION}-windows.exe
-          EOF
-          if gh release view "${VERSION}" >/dev/null 2>&1; then
-            gh release upload "${VERSION}" release-assets/* --clobber
-            gh release edit "${VERSION}" --notes-file release-notes.md
-          else
-            gh release create "${VERSION}" release-assets/* --notes-file release-notes.md
-          fi
+          PREVIOUS_TAG: ${{ needs.release-version.outputs.previous_tag }}
+        run: bash .github/scripts/ci/create-release.sh
