@@ -49,7 +49,7 @@ DROP_CLOSE = 16
 DROP_FRAMES = DROP_OPEN + DROP_FALL + DROP_CLOSE
 CELL_W = 11
 CELL_H = 7
-BIN_COUNT = 5
+BIN_COUNT = 4
 BIN_H = 7
 BIN_GAP = 2
 LID_OPEN_ANGLE_DEG = 130
@@ -58,7 +58,7 @@ LID_FLAP_LEN_OPEN = 0.14
 FALL_GHOST_TRAIL = ((0.28, "pair_dim"), (0.20, "pair_dim"),
                     (0.12, "pair_member"), (0.05, "pair_ring"))
 GRID_SKIP_BOTTOM = 2
-BIN_NAMES = {1: "Woe", 2: "Frolic", 3: "Dread", 4: "Malice", 5: "Birr"}
+BIN_NAMES = {1: "Woe", 2: "Frolic", 3: "Dread", 4: "Malice"}
 WIGGLE_SPEED_MIN = 0.45
 WIGGLE_SPEED_MAX = 0.75
 WIGGLE_AMP_CENTER = 0.55

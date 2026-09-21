@@ -264,7 +264,7 @@ DROP_FRAMES = DROP_OPEN + DROP_FALL + DROP_CLOSE
 
 CELL_W = 11
 CELL_H = 7
-BIN_COUNT = 5
+BIN_COUNT = 4
 BIN_H  = 7
 BIN_GAP = 2
 LID_OPEN_ANGLE_DEG   = 130
@@ -279,7 +279,7 @@ FALL_GHOST_TRAIL = (
 )
 GRID_SKIP_BOTTOM = 2
 
-BIN_NAMES = {1: "Woe", 2: "Frolic", 3: "Dread", 4: "Malice", 5: "Birr"}
+BIN_NAMES = {1: "Woe", 2: "Frolic", 3: "Dread", 4: "Malice"}
 
 WIGGLE_SPEED_MIN  = 0.45
 WIGGLE_SPEED_MAX  = 0.75
@@ -583,7 +583,7 @@ def setup_theme() -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def init_bins() -> dict:
-    starts = [1, 5, 0, 0, 3]
+    starts = [1, 5, 0, 0]
     return {i: {"progress": starts[i - 1], "drops": 0, "digits": []}
             for i in range(1, BIN_COUNT + 1)}
 
