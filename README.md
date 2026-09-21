@@ -55,9 +55,9 @@ Windows or macOS binaries.
 
 ### Publish the Docker image
 
-The `docker.yml` workflow builds the image on pull requests and publishes it to
-Docker Hub on pushes to `main` and on version tags. Configure these repository
-secrets before pushing:
+The `docker.yml` workflow builds the image on pull requests without publishing
+it. It publishes to Docker Hub only after code is pushed to `main` or after a
+version tag is created. Configure these repository secrets before pushing:
 
 - `DOCKERHUB_USERNAME`: Docker Hub username
 - `DOCKERHUB_TOKEN`: Docker Hub access token, not your password
@@ -105,11 +105,14 @@ ID signing and notarization.
 
 ## GitHub Actions
 
-The repository has two workflows:
+The repository has three workflows:
 
-- `actions.yml` runs linting and unit tests on pushes and pull requests.
+- `release-please.yml` runs linting and unit tests first, then runs Release
+  Please only when those checks pass.
 - `build.yml` builds Linux, macOS, and Windows binaries and uploads temporary
   workflow artifacts.
+- `docker.yml` builds and publishes the Docker image only on `main` and version
+  tags.
 
 ## Releases
 
