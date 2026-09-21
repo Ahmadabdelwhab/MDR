@@ -1,9 +1,11 @@
 {
   "release-type": "simple",
+  "include-component-in-tag": false,
   "packages": {
     ".": {
       "package-name": "mdr",
-      "release-type": "simple"
+      "release-type": "simple",
+      "include-component-in-tag": false
     }
   }
 }

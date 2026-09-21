@@ -118,8 +118,10 @@ it creates or updates a release pull request using the commit history. Merging
 that pull request creates the version tag and GitHub Release. The binary build
 workflow then uploads the Linux, macOS, and Windows binaries to that release.
 
-The initial manifest version is `0.1.0`. After setup, use conventional commit
-messages such as `feat: add image controls` or `fix: handle small terminals`.
+The initial manifest version is `0.1.0`. Release Please ignores older commits
+that do not use its expected format, so the next change should use a
+Conventional Commit message such as `feat: add image controls` or
+`fix: handle small terminals`. It will then create the release PR.
 
 If you need to create a version manually, push a semantic version tag:
 
