@@ -107,12 +107,14 @@ ID signing and notarization.
 
 The repository uses one pipeline in `pipeline.yml`:
 
-1. Run linting and unit tests.
-2. Build the Docker image and native binaries after checks pass.
-3. On a version tag, publish the Docker image and binaries.
-4. On a successful push to `main`, create the next patch version tag.
+1. Run linting on the GitHub runner.
+2. Build the Docker image and run the unit tests inside that image.
+3. Build native binaries after the container tests pass.
+4. On a version tag or successful `main` push, publish the image and binaries.
 
-Pull requests build and validate everything but never publish artifacts.
+Pull requests build and validate everything but never publish artifacts. Lint,
+Docker build, and container test logs are uploaded as workflow artifacts even
+when their steps fail.
 Newer runs cancel older runs for the same branch or tag.
 
 ### Pipeline DAG
