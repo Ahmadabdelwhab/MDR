@@ -121,6 +121,21 @@ it creates or updates a release pull request using the commit history. Merging
 that pull request creates the version tag and GitHub Release. The binary build
 workflow then uploads the Linux, macOS, and Windows binaries to that release.
 
+### Commit message rules
+
+Use Conventional Commit messages:
+
+```bash
+git commit -m "feat: add image support"
+git commit -m "fix: remove fifth basket"
+git commit -m "chore: update dependencies"
+```
+
+`feat` creates a minor release, `fix` creates a patch release, and `chore`
+records maintenance without creating a release. Use lowercase types followed
+by a colon and a short description. Messages such as `[FEAT] add support` or
+`more improvements` are not recognized by Release Please.
+
 The initial manifest version is `0.1.0`. Release Please ignores older commits
 that do not use its expected format, so the next change should use a
 Conventional Commit message such as `feat: add image controls` or
