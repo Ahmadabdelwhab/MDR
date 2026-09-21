@@ -1,0 +1,7 @@
+services:
+  app:
+    build: .
+    image: ahmadabdelwhab/sodiummdr:latest
+    stdin_open: true
+    tty: true
+    
