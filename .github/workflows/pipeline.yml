@@ -210,6 +210,10 @@ jobs:
     if: always() && needs.create-release-tag.result == 'success' && needs.prepare-binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download release binaries
         uses: actions/download-artifact@v4
         with:
@@ -225,13 +229,13 @@ jobs:
 
           ## Docker image
 
-          \\`docker pull ${IMAGE_NAME}:${VERSION}\\`
+          docker pull ${IMAGE_NAME}:${VERSION}
 
           ## Binaries
 
-          - Linux: \\`mdr-${VERSION}-linux\\`
-          - macOS: \\`mdr-${VERSION}-macos\\`
-          - Windows: \\`mdr-${VERSION}-windows.exe\\`
+          - Linux: mdr-${VERSION}-linux
+          - macOS: mdr-${VERSION}-macos
+          - Windows: mdr-${VERSION}-windows.exe
           EOF
           if gh release view "${VERSION}" >/dev/null 2>&1; then
             gh release upload "${VERSION}" release-assets/* --clobber
