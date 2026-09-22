@@ -284,6 +284,9 @@ jobs:
     # restrict which branches may deploy.
     environment: release
     steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
       - name: Download image artifact
         uses: actions/download-artifact@v4
         with:
